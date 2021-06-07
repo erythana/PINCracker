@@ -11,7 +11,7 @@ namespace PINCrack
 
         private bool checkAdjacentNumbers;
         private bool considerSequence;
-        private Dictionary<string, List<string>> adjacentDictionary;
+        private Dictionary<int, List<int>> adjacentDictionary;
         
         #endregion
 
@@ -22,18 +22,18 @@ namespace PINCrack
             checkAdjacentNumbers = true;
             considerSequence = true;
 
-            adjacentDictionary =  new Dictionary<string, List<string>>()
+            adjacentDictionary = new Dictionary<int, List<int>>
             {
-                {"1", new List<string> { "1", "2", "4" } },
-                {"2", new List<string> { "1", "2", "3", "5" }},
-                {"3", new List<string> { "2", "3", "6" }},
-                {"4", new List<string> { "1", "4", "5", "7" }},
-                {"5", new List<string> { "2", "4", "5", "6", "8" }},
-                {"6", new List<string> { "3", "5", "6", "9" }},
-                {"7", new List<string> { "4", "7", "8" }},
-                {"8", new List<string> { "5", "7", "8", "9", "0" }},
-                {"9", new List<string> { "6", "8", "9", }},
-                {"0", new List<string> { "8", "0" }}
+                {1, new List<int> {1, 2, 4}},
+                {2, new List<int> {1, 2, 3, 5}},
+                {3, new List<int> {2, 3, 6}},
+                {4, new List<int> {1, 4, 5, 7}},
+                {5, new List<int> {2, 4, 5, 6, 8}},
+                {6, new List<int> {3, 5, 6, 9}},
+                {7, new List<int> {4, 7, 8}},
+                {8, new List<int> {5, 7, 8, 9, 0}},
+                {9, new List<int> {6, 8, 9,}},
+                {0, new List<int> {8, 0}}
             };
         }
         
@@ -62,7 +62,7 @@ namespace PINCrack
         /// <summary>
         /// Maps each digit to the corresponding adjacent digits
         /// </summary>
-        public Dictionary<string, List<string>> AdjacentDictionary
+        public Dictionary<int, List<int>> AdjacentDictionary
         {
             set => adjacentDictionary = value;
         }
@@ -92,20 +92,33 @@ namespace PINCrack
         private IEnumerable<string> GetPossiblePINs(string pin)
         {
             var pinIndex = 0;
-            var possibleNumbers = GetAdjacentNumbersFrom(pin[pinIndex].ToString());
-            var queue = new Queue<string>(possibleNumbers);
+            var startTick = Environment.TickCount64;
+            var possibleNumbers = GetAdjacentNumbersFrom((int)char.GetNumericValue(pin[pinIndex]));
+            var queue = new  Queue<KeyValuePair<long,long>>(possibleNumbers.Select(x => new KeyValuePair<long, long>(0,x)));
+            
             while (queue.Any())
             {
-                if (queue.Peek().Length < pin.Length)
+                pinIndex = (int)GetPINLength(queue.Peek());
+                if (pinIndex < pin.Length)
                 {
                     var value = queue.Dequeue();
-                    pinIndex = value.Length;
-                    foreach (var number in GetAdjacentNumbersFrom(pin[pinIndex].ToString()))
-                        queue.Enqueue(value + number);
+                    foreach (var number in GetAdjacentNumbersFrom((int)char.GetNumericValue(pin[pinIndex])))
+                    {
+                        var leadingZeroCounter = value.Key;
+                        if (number == 0 && value.Value == 0)
+                            leadingZeroCounter++;
+                        var kvp = new KeyValuePair<long, long>(leadingZeroCounter, value.Value * 10 + number);
+                        queue.Enqueue(kvp);
+                    }
                 }
                 else
-                    yield return queue.Dequeue();
+                {
+                    var returnValue = queue.Dequeue().Value.ToString().PadLeft(pin.Length, '0');
+                    yield return returnValue;
+                }
             }
+            var duration = new TimeSpan(Environment.TickCount64 - startTick);
+            OnGotOutput($"Finished - operation took {duration:c}");
         }
 
         /// <summary>
@@ -115,32 +128,46 @@ namespace PINCrack
         /// <returns></returns>
         private IEnumerable<string> GetAllPossiblePINs(string pin)
         {
-            var possibleNumbers = new HashSet<string>();
+            var startTick = Environment.TickCount64;
+            var possibleNumbers = new HashSet<long>();
             possibleNumbers.UnionWith(GetPINNumbers(pin));
             if (checkAdjacentNumbers)
             {
-                var adjacentNumbers = possibleNumbers.SelectMany(GetAdjacentNumbersFrom).ToList();
+                var adjacentNumbers = possibleNumbers.SelectMany(n => GetAdjacentNumbersFrom((int)n)).ToList();
                 foreach (var adjacent in adjacentNumbers)
                     possibleNumbers.Add(adjacent);
             }
 
             var possibleCombinationsCount = Math.Pow(possibleNumbers.Count, pin.Length);
             OnGotOutput($"Getting all {possibleCombinationsCount} possible PIN Combinations\n" +
-                          $"(The sequence of the PINs numbers is irrelevant => ALL combinations)\n" +
-                          $"---Depending on the length of the PIN, this might consume A LOT RAM---");
+                        $"(The sequence of the PINs numbers is irrelevant => ALL combinations)\n");
 
-            var queue = new Queue<string>(possibleNumbers.Select(x => x.ToString()));
+            var queue = new Queue<KeyValuePair<long,long>>(possibleNumbers.Select(x => new KeyValuePair<long, long>(0,x)));
             while (queue.Any())
             {
-                if (queue.Peek().Length < pin.Length)
+                if (GetPINLength(queue.Peek()) < pin.Length)
                 {
                     var value = queue.Dequeue();
                     foreach (var number in possibleNumbers)
-                        queue.Enqueue(value + number);
+                    {
+                        var leadingZeroCounter = value.Key;
+                        if (number == 0 && value.Value == 0)
+                            leadingZeroCounter++;
+
+                        var kvp = new KeyValuePair<long, long>(leadingZeroCounter, value.Value * 10 + number);
+                        queue.Enqueue(kvp);
+                    }
                 }
                 else
-                    yield return queue.Dequeue();
+                {
+                    var returnValue = queue.Dequeue().Value.ToString().PadLeft(pin.Length, '0');
+                    yield return returnValue;
+                }
+                   
             }
+
+            var duration = new TimeSpan(Environment.TickCount64 - startTick);
+            OnGotOutput($"Finished - operation took {duration:c}");
         }
 
         #endregion
@@ -157,21 +184,28 @@ namespace PINCrack
 
         #region Helper Methods
 
-        private static IEnumerable<string> GetPINNumbers(string pin) =>
-            pin.Select(p => char.GetNumericValue(p).ToString(CultureInfo.InvariantCulture));
+        private long GetPINLength(KeyValuePair<long, long> kvp)
+        {
+            var pinLength = 1;
+            var value = kvp.Value;
+            while (value / 10 > 0)
+            {
+                value /= 10;
+                pinLength++;
+            }
+            return pinLength + kvp.Key;
+        }
         
-        /// <summary>
-        /// Get all adjacent numbers from an single number (of type <see cref="string"/>)
-        /// </summary>
-        /// <param name="possibleNumber">The number to get the adjacent numbers from</param>
-        /// <returns></returns>
-        private IEnumerable<string> GetAdjacentNumbersFrom(string possibleNumber)
+        private static IEnumerable<long> GetPINNumbers(string pin) =>
+            pin.Select(p => (long)char.GetNumericValue(p));
+        
+        private IEnumerable<long> GetAdjacentNumbersFrom(int possibleNumber)
         {
             if (!adjacentDictionary.ContainsKey(possibleNumber)) throw new InvalidOperationException("The specified number was not in Adjacent-Dictionary!");
             foreach (var number in adjacentDictionary[possibleNumber])
                 yield return number;
         }
-
+        
         #endregion
     }
 }
